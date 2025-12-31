@@ -1,0 +1,220 @@
+@page "/sheet"
+@using KristofferStrube.Blazor.FileSystemAccess
+@using KristofferStrube.Blazor.FileSystem
+@using BlazorOffice.Services
+@inject IFileSystemAccessService FileSystemAccessService
+@inject ExcelService ExcelService
+
+<PageTitle>Excel Sheet</PageTitle>
+
+<div class="d-flex flex-column h-100">
+    <div class="d-flex justify-content-between align-items-center p-3 border-bottom bg-light">
+        <h3 class="m-0">Excel Sheet</h3>
+        <div class="btn-group">
+            <button class="btn btn-outline-primary" @onclick="OpenXlsx">📂 Open .xlsx</button>
+            <button class="btn btn-outline-success" @onclick="SaveXlsx">💾 Save</button>
+        </div>
+    </div>
+
+    <!-- Formula Bar -->
+    <div class="d-flex align-items-center p-2 border-bottom bg-white">
+        <div class="fw-bold text-muted px-3 border-end">fx</div>
+        <input type="text" 
+               class="form-control border-0 shadow-none" 
+               placeholder="Select a cell..." 
+               value="@CurrentFormulaBarValue"
+               @onchange="UpdateFromFormulaBar"
+               disabled="@(SelectedRow == -1)" />
+    </div>
+
+    <div class="flex-grow-1 p-3 overflow-auto">
+        @if (GridData.Count == 0)
+        {
+            <div class="text-center mt-5 text-muted">
+                <p>No sheet loaded.</p>
+                <button class="btn btn-primary" @onclick="CreateNew">Create New Sheet</button>
+            </div>
+        }
+        else
+        {
+            <table class="table table-bordered table-sm user-select-none">
+                <thead>
+                    <tr>
+                        <th class="bg-light text-center" style="width: 40px;">#</th>
+                        @for (int c = 0; c < GridData[0].Count; c++)
+                        {
+                            <th class="bg-light text-center">@GetColumnName(c)</th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @for (int r = 0; r < GridData.Count; r++)
+                    {
+                        var localR = r; 
+                        <tr>
+                            <td class="bg-light text-center text-muted">@(r + 1)</td>
+                            @for (int c = 0; c < GridData[r].Count; c++)
+                            {
+                                var localC = c; 
+                                var cell = GridData[r][c];
+                                var isSelected = r == SelectedRow && c == SelectedCol;
+                                <td class="p-0 position-relative @(isSelected ? "border border-2 border-success" : "")" 
+                                    @onclick="@(() => SelectCell(localR, localC))">
+                                    
+                                    <!-- Display Value (Calculated) in Grid -->
+                                    <div class="px-2 py-1 text-nowrap overflow-hidden" style="min-height: 25px; min-width: 50px;">
+                                        @cell.Value
+                                    </div>
+                                </td>
+                            }
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+@code {
+    private List<List<CellData>> GridData = new();
+    private FileSystemFileHandle? CurrentFileHandle;
+    
+    private int SelectedRow = -1;
+    private int SelectedCol = -1;
+
+    // Helper to get/set bar value
+    private string CurrentFormulaBarValue 
+    {
+        get 
+        {
+            if (SelectedRow == -1 || SelectedCol == -1) return "";
+            var cell = GridData[SelectedRow][SelectedCol];
+            return !string.IsNullOrEmpty(cell.Formula) ? $"={cell.Formula}" : cell.Value;
+        }
+    }
+
+    private void SelectCell(int r, int c)
+    {
+        SelectedRow = r;
+        SelectedCol = c;
+    }
+
+    private void UpdateFromFormulaBar(ChangeEventArgs e)
+    {
+        if (SelectedRow == -1) return;
+        
+        string val = e.Value?.ToString() ?? "";
+        var cell = GridData[SelectedRow][SelectedCol];
+
+        if (val.StartsWith("="))
+        {
+            cell.Formula = val.Substring(1);
+            // Note: We cannot re-calculate values client-side easily.
+            // In a real app, this would require a JS formula engine.
+            // For now, we clear the Value to indicate it needs recalc (or keep old?).
+            // Let's keep old value or show "..." to prevent confusion?
+            // User prefers seeing "Evaluated", so we might leave Value alone or set to "Recalc needed"
+        }
+        else
+        {
+            cell.Value = val;
+            cell.Formula = "";
+        }
+    }
+
+    private void CreateNew()
+    {
+        GridData = Enumerable.Range(0, 10)
+            .Select(_ => Enumerable.Repeat(new CellData(), 10).ToList())
+            .ToList();
+    }
+    
+    // ... [Rest of file: GetColumnName, OpenXlsx, SaveXlsx] ...
+
+    private string GetColumnName(int index)
+    {
+        string columnName = "";
+        while (index >= 0)
+        {
+            columnName = (char)('A' + (index % 26)) + columnName;
+            index = (index / 26) - 1;
+        }
+        return columnName;
+    }
+
+    private async Task OpenXlsx()
+    {
+        try
+        {
+            var options = new OpenFilePickerOptionsStartInWellKnownDirectory
+            {
+                Types = new[] 
+                {
+                    new FilePickerAcceptType 
+                    {
+                        Description = "Excel Files",
+                        Accept = new() { { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", new[] { ".xlsx" } } }
+                    }
+                }
+            };
+            
+            var fileHandles = await FileSystemAccessService.ShowOpenFilePickerAsync(options);
+            var fileHandle = fileHandles.Single();
+            var file = await fileHandle.GetFileAsync();
+            
+            using var stream = await file.StreamAsync();
+            GridData = await ExcelService.ReadXlsxAsync(stream);
+            CurrentFileHandle = fileHandle;
+            
+            // Normalize
+            if (GridData.Any())
+            {
+                int maxCols = GridData.Max(r => r.Count);
+                foreach (var row in GridData)
+                {
+                    while (row.Count < maxCols) row.Add(new CellData());
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error opening xlsx: {ex.Message}");
+        }
+    }
+
+    private async Task SaveXlsx()
+    {
+        try
+        {
+            FileSystemFileHandle? handle = CurrentFileHandle;
+
+            if (handle == null)
+            {
+                 var options = new SaveFilePickerOptionsStartInWellKnownDirectory
+                {
+                    Types = new[] 
+                    {
+                        new FilePickerAcceptType 
+                        {
+                            Description = "Excel File",
+                            Accept = new() { { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", new[] { ".xlsx" } } }
+                        }
+                    }
+                };
+                handle = await FileSystemAccessService.ShowSaveFilePickerAsync(options);
+            }
+
+            var xlsxBytes = await ExcelService.SaveXlsxAsync(GridData);
+            
+            var writable = await handle.CreateWritableAsync();
+            await writable.WriteAsync(xlsxBytes);
+            await writable.CloseAsync();
+            
+            CurrentFileHandle = handle;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving xlsx: {ex.Message}");
+        }
+    }
+}

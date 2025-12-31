@@ -1,0 +1,80 @@
+@page "/pdf"
+@using KristofferStrube.Blazor.FileSystemAccess
+@using KristofferStrube.Blazor.FileSystem
+@inject IFileSystemAccessService FileSystemAccessService
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+
+<PageTitle>PDF Reader</PageTitle>
+
+<div class="d-flex flex-column h-100">
+    <div class="d-flex justify-content-between align-items-center p-3 border-bottom bg-light">
+        <h3 class="m-0">PDF Reader</h3>
+        <button class="btn btn-outline-danger" @onclick="OpenPdf">📂 Open PDF</button>
+    </div>
+
+    <div class="flex-grow-1 p-0 overflow-hidden bg-secondary d-flex justify-content-center align-items-center">
+        @if (!string.IsNullOrEmpty(PdfUrl))
+        {
+            <embed src="@PdfUrl" type="application/pdf" width="100%" height="100%" />
+        }
+        else
+        {
+            <div class="text-white text-center">
+                <p class="fs-4">No PDF loaded.</p>
+                <p class="small opacity-75">Click "Open PDF" to view a local file.</p>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private string? PdfUrl;
+
+    private async Task OpenPdf()
+    {
+        try
+        {
+            var options = new OpenFilePickerOptionsStartInWellKnownDirectory
+            {
+                Types = new[] 
+                {
+                    new FilePickerAcceptType 
+                    {
+                        Description = "PDF Files",
+                        Accept = new() { { "application/pdf", new[] { ".pdf" } } }
+                    }
+                }
+            };
+            
+            var fileHandles = await FileSystemAccessService.ShowOpenFilePickerAsync(options);
+            var fileHandle = fileHandles.Single();
+            var file = await fileHandle.GetFileAsync();
+            
+            // ZERO-COPY CHEAT: 
+            // Instead of streaming C# -> JS (which fails and is slow),
+            // we pass the underlying JS File object directly to our utility.
+            // This relies on 'file' inheriting from BaseJSWrapper.
+            
+            // Revoke old URL if exists
+            if (!string.IsNullOrEmpty(PdfUrl))
+            {
+                await JSRuntime.InvokeVoidAsync("blazorUtils.revokeBlobUrl", PdfUrl);
+            }
+
+            PdfUrl = await JSRuntime.InvokeAsync<string>("blazorUtils.createUrlFromBlob", file.JSReference);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error opening PDF: {ex.Message}");
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (!string.IsNullOrEmpty(PdfUrl))
+        {
+            await JSRuntime.InvokeVoidAsync("blazorUtils.revokeBlobUrl", PdfUrl);
+        }
+    }
+}

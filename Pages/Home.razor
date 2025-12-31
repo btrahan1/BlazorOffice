@@ -1,0 +1,184 @@
+﻿@page "/"
+@inject IFileSystemAccessService FileSystemAccessService
+@inject BlazorOffice.Services.WordService WordService
+
+<PageTitle>BlazorOffice</PageTitle>
+
+<div class="container-fluid vh-100 d-flex flex-column p-0">
+    <!-- Toolbar -->
+    <div class="bg-light border-bottom p-2 d-flex gap-2 align-items-center">
+        <h4 class="mb-0 me-3 text-primary"><i class="bi bi-file-earmark-word-fill me-2"></i>BlazorOffice</h4>
+        
+        <button class="btn btn-outline-primary btn-sm" @onclick="OpenFile">
+            <i class="bi bi-folder-open me-1"></i> Open Local File
+        </button>
+        
+        <button class="btn btn-outline-success btn-sm" @onclick="SaveFile" disabled="@(CurrentFileHandle == null)">
+            <i class="bi bi-save me-1"></i> Save
+        </button>
+        
+        <button class="btn btn-outline-secondary btn-sm" @onclick="SaveAsFile">
+            <i class="bi bi-file-earmark-plus me-1"></i> Save As...
+        </button>
+
+        <span class="ms-auto text-muted small">
+            @if (CurrentFileHandle != null)
+            {
+                <span class="text-success"><i class="bi bi-link-45deg"></i> Linked to: <strong>@CurrentFileName</strong></span>
+            }
+            else
+            {
+                <span>(Unsaved Draft)</span>
+            }
+        </span>
+    </div>
+
+    <!-- Editor Area -->
+    <div class="flex-grow-1 p-3 bg-white d-flex flex-column">
+        <!-- Quill Editor Container -->
+        <div id="editor-container" @ref="EditorElement" style="height: 100%;"></div>
+    </div>
+</div>
+
+@code {
+    private ElementReference EditorElement;
+    private FileSystemFileHandle? CurrentFileHandle;
+    private string CurrentFileName = "";
+    private bool IsEditorInitialized = false;
+
+    [Inject] IJSRuntime JSRuntime { get; set; }
+    
+    // Check if current file is docx
+    private bool IsDocx => CurrentFileName.EndsWith(".docx", StringComparison.OrdinalIgnoreCase);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JSRuntime.InvokeVoidAsync("QuillFunctions.createQuill", EditorElement);
+            IsEditorInitialized = true;
+        }
+    }
+
+    private async Task OpenFile()
+    {
+        try
+        {
+            var options = new OpenFilePickerOptionsStartInWellKnownDirectory
+            {
+                Types = new[] 
+                {
+                    new FilePickerAcceptType 
+                    {
+                        Description = "Document Files",
+                        Accept = new() { { "text/plain", new[] { ".txt" } }, { "application/vnd.openxmlformats-officedocument.wordprocessingml.document", new[] { ".docx" } } }
+                    }
+                }
+            };
+            
+            var fileHandles = await FileSystemAccessService.ShowOpenFilePickerAsync(options);
+            var fileHandle = fileHandles.Single();
+            var file = await fileHandle.GetFileAsync();
+            CurrentFileName = await fileHandle.GetNameAsync(); // Update name first for check
+
+            string contentToLoad = "";
+
+            if (IsDocx)
+            {
+                using var stream = await file.StreamAsync();
+                contentToLoad = await WordService.ReadDocxAsync(stream);
+            }
+            else
+            {
+                contentToLoad = await file.TextAsync();
+                contentToLoad = contentToLoad.Replace("\n", "<br/>");
+            }
+
+            if (IsEditorInitialized)
+            {
+                await JSRuntime.InvokeVoidAsync("QuillFunctions.loadHTML", EditorElement, contentToLoad);
+            }
+            
+            CurrentFileHandle = fileHandle;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error opening file: {ex.Message}");
+        }
+    }
+
+    private async Task SaveFile()
+    {
+        if (CurrentFileHandle == null) return;
+
+        try
+        {
+            var writable = await CurrentFileHandle.CreateWritableAsync();
+            
+            if (IsDocx)
+            {
+                string htmlContent = await JSRuntime.InvokeAsync<string>("QuillFunctions.getHTML", EditorElement);
+                var docxBytes = await WordService.CreateDocxFromHtmlAsync(htmlContent);
+                await writable.WriteAsync(docxBytes);
+            }
+            else
+            {
+                string textContent = await JSRuntime.InvokeAsync<string>("QuillFunctions.getText", EditorElement);
+                await writable.WriteAsync(textContent);
+            }
+            
+            await writable.CloseAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving file: {ex.Message}");
+        }
+    }
+
+    private async Task SaveAsFile()
+    {
+        try
+        {
+            var options = new SaveFilePickerOptionsStartInWellKnownDirectory
+            {
+                Types = new[] 
+                {
+                    new FilePickerAcceptType 
+                    {
+                        Description = "Word Document",
+                        Accept = new() { { "application/vnd.openxmlformats-officedocument.wordprocessingml.document", new[] { ".docx" } } }
+                    },
+                    new FilePickerAcceptType
+                    {
+                        Description = "Text File",
+                        Accept = new() { { "text/plain", new[] { ".txt" } } }
+                    }
+                }
+            };
+            
+            var fileHandle = await FileSystemAccessService.ShowSaveFilePickerAsync(options);
+            CurrentFileName = await fileHandle.GetNameAsync(); // Update name first
+
+            var writable = await fileHandle.CreateWritableAsync();
+            
+            if (IsDocx)
+            {
+                string htmlContent = await JSRuntime.InvokeAsync<string>("QuillFunctions.getHTML", EditorElement);
+                var docxBytes = await WordService.CreateDocxFromHtmlAsync(htmlContent);
+                await writable.WriteAsync(docxBytes);
+            }
+            else
+            {
+                string textContent = await JSRuntime.InvokeAsync<string>("QuillFunctions.getText", EditorElement);
+                await writable.WriteAsync(textContent);
+            }
+
+            await writable.CloseAsync();
+            CurrentFileHandle = fileHandle;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving file as: {ex.Message}");
+        }
+    }
+}

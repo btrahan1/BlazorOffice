@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BlazorOffice</title>
+    <!-- Smart Base Tag: Auto-detects if running on localhost or GitHub Pages -->
+    <script>
+        var path = window.location.pathname.split('/');
+        var base = document.getElementsByTagName('base')[0];
+        if (window.location.hostname.includes('github.io')) {
+            base.setAttribute('href', '/' + path[1] + '/');
+        } else {
+            base.setAttribute('href', '/');
+        }
+    </script>
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link href="BlazorOffice.styles.css" rel="stylesheet" />
+    <link href="//cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+    <link href="//cdn.quilljs.com/1.3.6/quill.bubble.css" rel="stylesheet">
+</head>
+
+<body>
+    <div id="app">
+        <svg class="loading-progress">
+            <circle r="40%" cx="50%" cy="50%" />
+            <circle r="40%" cx="50%" cy="50%" />
+        </svg>
+        <div class="loading-progress-text"></div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+    <script src="//cdn.quilljs.com/1.3.6/quill.js"></script>
+    <script src="js/quill-interop.js"></script>
+    <script src="js/utils.js"></script>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+
+</html>
